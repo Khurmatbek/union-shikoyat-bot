@@ -6,55 +6,51 @@ const path = require("path");
 const cron = require("node-cron");
 const { TEACHERS, STUDENTS, SECRET_CHANNEL_ID } = require("./config");
 
-const app = express();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
-// === ФАЙЛ ДЛЯ ХРАНЕНИЯ БАЛЛОВ ===
+const app = express();
+const PORT = process.env.PORT || 3000;
 const SCORES_FILE = "./data/scores.json";
 
-// === ЧТЕНИЕ БАЛЛОВ ===
+// === FUNKTSIYALAR ===
 function loadScores() {
   if (!fs.existsSync(SCORES_FILE)) return {};
   return JSON.parse(fs.readFileSync(SCORES_FILE));
 }
 
-// === СОХРАНЕНИЕ БАЛЛОВ ===
 function saveScores(data) {
   const dir = path.dirname(SCORES_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(SCORES_FILE, JSON.stringify(data, null, 2));
 }
 
-// === ЦВЕТ В ЗАВИСИМОСТИ ОТ ПОВЕДЕНИЯ ===
 function getColor(score) {
   if (score === 0) return "🟢 Примерное поведение";
   if (score <= 5) return "🟡 Плохое поведение";
   return "🔴 Очень плохое поведение";
 }
 
-// === ПРОВЕРКА НА ПРЕПОДАВАТЕЛЯ ===
 function isTeacher(ctx) {
   const username = `@${ctx.from.username || ""}`;
   return TEACHERS.includes(username);
 }
 
-// === КОМАНДА /start ===
+// === /start ===
 bot.start((ctx) => {
   if (!isTeacher(ctx)) return ctx.reply("❌ Вы не являетесь преподавателем!");
   ctx.session = {};
   ctx.reply(
-    `Здравствуйте! 👋 Этот бот предназначен для учёта штрафных баллов учеников.\n
+    `Здравствуйте! Этот бот предназначен для учёта штрафных баллов учеников.\n
 Вы можете использовать его только как преподаватель.\n
 Чтобы начать, нажмите кнопку «➕ Добавить штраф».`,
     Markup.keyboard([["➕ Добавить штраф"]]).resize()
   );
 });
 
-// === ДОБАВЛЕНИЕ ШТРАФА ===
+// === Добавление штрафа ===
 bot.hears("➕ Добавить штраф", (ctx) => {
   if (!isTeacher(ctx)) return ctx.reply("❌ Вы не являетесь преподавателем!");
-  if (!ctx.session) ctx.session = {};
   ctx.reply(
     "❓ Какой тип штрафа хотите добавить?",
     Markup.inlineKeyboard([
@@ -64,12 +60,10 @@ bot.hears("➕ Добавить штраф", (ctx) => {
   );
 });
 
-// === ВЫБОР ТИПА ШТРАФА ===
+// === Выбор типа штрафа ===
 bot.action(/type_(.+)/, (ctx) => {
-  if (!ctx.session) ctx.session = {};
   const type = ctx.match[1];
-  ctx.session.type = type === "bad" ? 1 : 3;
-
+  ctx.session = { type: type === "bad" ? 1 : 3 };
   ctx.editMessageText(
     "📚 Выберите класс:",
     Markup.inlineKeyboard(
@@ -79,12 +73,10 @@ bot.action(/type_(.+)/, (ctx) => {
   ctx.answerCbQuery();
 });
 
-// === ВЫБОР КЛАССА ===
+// === Выбор класса ===
 bot.action(/class_(.+)/, (ctx) => {
-  if (!ctx.session) ctx.session = {};
   const className = ctx.match[1];
   ctx.session.className = className;
-
   ctx.editMessageText(
     `👨‍🎓 Выберите ученика (${className}):`,
     Markup.inlineKeyboard(
@@ -94,14 +86,10 @@ bot.action(/class_(.+)/, (ctx) => {
   ctx.answerCbQuery();
 });
 
-// === ВЫБОР УЧЕНИКА ===
+// === Выбор ученика ===
 bot.action(/student_(.+)/, async (ctx) => {
   const student = ctx.match[1];
   const { type, className } = ctx.session;
-
-  if (!type || !className)
-    return ctx.reply("❌ Сначала выберите тип штрафа и класс!");
-
   ctx.session.student = student;
 
   const scoreTypeText = type === 1 ? "⚠️ Плохое (1 балл)" : "🚨 Очень плохое (3 балла)";
@@ -117,7 +105,7 @@ bot.action(/student_(.+)/, async (ctx) => {
   ctx.answerCbQuery();
 });
 
-// === ✅ ПОДТВЕРЖДЕНИЕ ===
+// === Подтверждение ===
 bot.action("confirm_add", async (ctx) => {
   const { type, className, student } = ctx.session || {};
   if (!type || !className || !student) return;
@@ -129,11 +117,9 @@ bot.action("confirm_add", async (ctx) => {
 
   const total = scores[className][student];
   const teacher = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-
   const message = `✅ ${student} из класса ${className} получил ${type} штрафных балл(ов).\n\nВсего: ${total} (${getColor(total)})\n👨‍🏫 Добавил: ${teacher}`;
 
   await ctx.editMessageText(message);
-
   try {
     await bot.telegram.sendMessage(SECRET_CHANNEL_ID, message);
   } catch (err) {
@@ -141,29 +127,22 @@ bot.action("confirm_add", async (ctx) => {
   }
 
   ctx.session = {};
-  await ctx.reply(
-    "➕ Добавить ещё один штраф?",
-    Markup.keyboard([["➕ Добавить штраф"]]).resize()
-  );
+  await ctx.reply("➕ Добавить ещё один штраф?", Markup.keyboard([["➕ Добавить штраф"]]).resize());
   ctx.answerCbQuery("✅ Подтверждено!");
 });
 
-// === ❌ ОТМЕНА ===
+// === Отмена ===
 bot.action("cancel_add", async (ctx) => {
   ctx.session = {};
   await ctx.editMessageText("❌ Добавление штрафа отменено.");
-  await ctx.reply(
-    "Хотите добавить другой штраф?",
-    Markup.keyboard([["➕ Добавить штраф"]]).resize()
-  );
+  await ctx.reply("Хотите добавить другой штраф?", Markup.keyboard([["➕ Добавить штраф"]]).resize());
   ctx.answerCbQuery("Отменено");
 });
 
-// === ЕЖЕДНЕВНЫЙ ОТЧЁТ ===
+// === Автоотчёт ===
 cron.schedule("59 23 * * *", async () => {
   const scores = loadScores();
   if (Object.keys(scores).length === 0) return;
-
   let report = "📊 Ежедневный отчёт (итог по всем классам):\n\n";
   for (const [className, students] of Object.entries(scores)) {
     report += `📚 ${className}:\n`;
@@ -172,7 +151,6 @@ cron.schedule("59 23 * * *", async () => {
     }
     report += "\n";
   }
-
   try {
     await bot.telegram.sendMessage(SECRET_CHANNEL_ID, report);
   } catch (err) {
@@ -180,19 +158,28 @@ cron.schedule("59 23 * * *", async () => {
   }
 });
 
-// === EXPRESS SERVER (WEBHOOK) ===
-app.get("/", (req, res) => {
-  res.send("🤖 Union Shikoyat Bot работает стабильно!");
-});
+// === RESET (bir marta prod uchun) ===
+if (process.env.RESET_SCORES === "true") {
+  const scores = {};
+  for (const [className, students] of Object.entries(STUDENTS)) {
+    scores[className] = {};
+    for (const student of students) {
+      scores[className][student] = 0;
+    }
+  }
+  fs.mkdirSync("./data", { recursive: true });
+  fs.writeFileSync(SCORES_FILE, JSON.stringify(scores, null, 2));
+  console.log("🔁 Barcha o‘quvchilarning ballari 0 ga qaytarildi!");
+}
 
+// === WEBHOOK Render uchun ===
 app.use(express.json());
-app.use(bot.webhookCallback(`/webhook/${process.env.BOT_TOKEN}`));
+app.get("/", (req, res) => res.send("✅ Bot ishlayapti!"));
+app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => bot.handleUpdate(req.body, res));
 
-// === УСТАНОВКА WEBHOOK ===
-const WEBHOOK_URL = `https://union-shikoyat-bot.onrender.com/webhook/${process.env.BOT_TOKEN}`;
-bot.telegram.setWebhook(WEBHOOK_URL);
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🌐 Web-сервер запущен на порту ${PORT}`);
+app.listen(PORT, async () => {
+  const url = `${process.env.RENDER_EXTERNAL_URL}/bot${process.env.BOT_TOKEN}`;
+  await bot.telegram.setWebhook(url);
+  console.log(`🌐 Webhook ulandi: ${url}`);
+  console.log(`🚀 Web-сервер запущен на порту ${PORT}`);
 });
