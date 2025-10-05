@@ -1,19 +1,17 @@
 require("dotenv").config();
-const express = require("express");
 const { Telegraf, Markup, session } = require("telegraf");
 const fs = require("fs");
-const path = require("path");
 const cron = require("node-cron");
+const path = require("path");
+const express = require("express");
 const { TEACHERS, STUDENTS, SECRET_CHANNEL_ID } = require("./config");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
-const app = express();
-const PORT = process.env.PORT || 3000;
 const SCORES_FILE = "./data/scores.json";
 
-// === FUNKTSIYALAR ===
+// === Функции ===
 function loadScores() {
   if (!fs.existsSync(SCORES_FILE)) return {};
   return JSON.parse(fs.readFileSync(SCORES_FILE));
@@ -36,19 +34,33 @@ function isTeacher(ctx) {
   return TEACHERS.includes(username);
 }
 
+// === RESET (только при необходимости) ===
+if (process.env.RESET_SCORES === "true") {
+  const scores = {};
+  for (const [className, students] of Object.entries(STUDENTS)) {
+    scores[className] = {};
+    for (const student of students) {
+      scores[className][student] = 0;
+    }
+  }
+  fs.mkdirSync("./data", { recursive: true });
+  fs.writeFileSync(SCORES_FILE, JSON.stringify(scores, null, 2));
+  console.log("🔁 Все баллы сброшены до 0 (RESET_SCORES=true)");
+} else {
+  console.log("⚙️ RESET_SCORES=false — данные не изменены");
+}
+
 // === /start ===
 bot.start((ctx) => {
   if (!isTeacher(ctx)) return ctx.reply("❌ Вы не являетесь преподавателем!");
   ctx.session = {};
   ctx.reply(
-    `Здравствуйте! Этот бот предназначен для учёта штрафных баллов учеников.\n
-Вы можете использовать его только как преподаватель.\n
-Чтобы начать, нажмите кнопку «➕ Добавить штраф».`,
+    `Здравствуйте! Этот бот предназначен для учёта штрафных баллов учеников.\n\nЧтобы начать, нажмите кнопку «➕ Добавить штраф».`,
     Markup.keyboard([["➕ Добавить штраф"]]).resize()
   );
 });
 
-// === Добавление штрафа ===
+// === Добавить штраф ===
 bot.hears("➕ Добавить штраф", (ctx) => {
   if (!isTeacher(ctx)) return ctx.reply("❌ Вы не являетесь преподавателем!");
   ctx.reply(
@@ -63,7 +75,8 @@ bot.hears("➕ Добавить штраф", (ctx) => {
 // === Выбор типа штрафа ===
 bot.action(/type_(.+)/, (ctx) => {
   const type = ctx.match[1];
-  ctx.session = { type: type === "bad" ? 1 : 3 };
+  ctx.session.type = type === "bad" ? 1 : 3;
+
   ctx.editMessageText(
     "📚 Выберите класс:",
     Markup.inlineKeyboard(
@@ -77,6 +90,7 @@ bot.action(/type_(.+)/, (ctx) => {
 bot.action(/class_(.+)/, (ctx) => {
   const className = ctx.match[1];
   ctx.session.className = className;
+
   ctx.editMessageText(
     `👨‍🎓 Выберите ученика (${className}):`,
     Markup.inlineKeyboard(
@@ -90,6 +104,7 @@ bot.action(/class_(.+)/, (ctx) => {
 bot.action(/student_(.+)/, async (ctx) => {
   const student = ctx.match[1];
   const { type, className } = ctx.session;
+
   ctx.session.student = student;
 
   const scoreTypeText = type === 1 ? "⚠️ Плохое (1 балл)" : "🚨 Очень плохое (3 балла)";
@@ -117,7 +132,7 @@ bot.action("confirm_add", async (ctx) => {
 
   const total = scores[className][student];
   const teacher = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-  const message = `✅ ${student} из класса ${className} получил ${type} штрафных балл(ов).\n\nВсего: ${total} (${getColor(total)})\n👨‍🏫 Добавил: ${teacher}`;
+  const message = `✅ ${student} из класса ${className} получил ${type} штрафных балл(ов).\nВсего: ${total} (${getColor(total)})\n👨‍🏫 Добавил: ${teacher}`;
 
   await ctx.editMessageText(message);
   try {
@@ -139,10 +154,11 @@ bot.action("cancel_add", async (ctx) => {
   ctx.answerCbQuery("Отменено");
 });
 
-// === Автоотчёт ===
+// === Ежедневный отчёт ===
 cron.schedule("59 23 * * *", async () => {
   const scores = loadScores();
   if (Object.keys(scores).length === 0) return;
+
   let report = "📊 Ежедневный отчёт (итог по всем классам):\n\n";
   for (const [className, students] of Object.entries(scores)) {
     report += `📚 ${className}:\n`;
@@ -151,6 +167,7 @@ cron.schedule("59 23 * * *", async () => {
     }
     report += "\n";
   }
+
   try {
     await bot.telegram.sendMessage(SECRET_CHANNEL_ID, report);
   } catch (err) {
@@ -158,28 +175,10 @@ cron.schedule("59 23 * * *", async () => {
   }
 });
 
-// === RESET (bir marta prod uchun) ===
-if (process.env.RESET_SCORES === "true") {
-  const scores = {};
-  for (const [className, students] of Object.entries(STUDENTS)) {
-    scores[className] = {};
-    for (const student of students) {
-      scores[className][student] = 0;
-    }
-  }
-  fs.mkdirSync("./data", { recursive: true });
-  fs.writeFileSync(SCORES_FILE, JSON.stringify(scores, null, 2));
-  console.log("🔁 Barcha o‘quvchilarning ballari 0 ga qaytarildi!");
-}
+// === Express server (Render ping) ===
+const app = express();
+app.get("/", (req, res) => res.send("🤖 Бот работает стабильно (Render + polling)"));
+app.listen(process.env.PORT || 3000, () => console.log("🌐 Web-сервер запущен"));
 
-// === WEBHOOK Render uchun ===
-app.use(express.json());
-app.get("/", (req, res) => res.send("✅ Bot ishlayapti!"));
-app.post(`/bot${process.env.BOT_TOKEN}`, (req, res) => bot.handleUpdate(req.body, res));
-
-app.listen(PORT, async () => {
-  const url = `${process.env.RENDER_EXTERNAL_URL}/bot${process.env.BOT_TOKEN}`;
-  await bot.telegram.setWebhook(url);
-  console.log(`🌐 Webhook ulandi: ${url}`);
-  console.log(`🚀 Web-сервер запущен на порту ${PORT}`);
-});
+bot.launch();
+console.log("🤖 Бот запущен и работает...");
